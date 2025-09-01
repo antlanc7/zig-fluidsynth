@@ -10,6 +10,7 @@ fn now() std.time.Instant {
 
 const Synth = struct {
     synth: *fs.fluid_synth_t,
+    start_time: std.time.Instant,
     received_active_sensing: ?std.time.Instant,
     transposition: i32,
     touch_disabled: bool,
@@ -17,6 +18,7 @@ const Synth = struct {
     pub fn init(synth: *fs.fluid_synth_t) Synth {
         return .{
             .synth = synth,
+            .start_time = now(),
             .received_active_sensing = null,
             .transposition = 0,
             .touch_disabled = false,
@@ -37,12 +39,12 @@ fn handle_midi_event(data: ?*anyopaque, event: ?*fs.fluid_midi_event_t) callconv
     const midi_key = fs.fluid_midi_event_get_key(event);
     const midi_vel = fs.fluid_midi_event_get_velocity(event);
 
-    // std.debug.print("{}: event {} {} {}\n", .{
-    //     (now().since(start_time)) / std.time.ns_per_ms,
-    //     midi_type,
-    //     midi_key,
-    //     midi_vel,
-    // });
+    std.log.debug("[{}] event {} {} {}", .{
+        now().since(synth_state.start_time) / std.time.ns_per_ms,
+        midi_type,
+        midi_key,
+        midi_vel,
+    });
 
     if (midi_type == 144) {
         if (synth_state.transposition != 0) {
@@ -58,7 +60,7 @@ fn handle_midi_event(data: ?*anyopaque, event: ?*fs.fluid_midi_event_t) callconv
 
 fn fluid_check_error(err: c_int) void {
     if (err != fs.FLUID_OK) {
-        std.debug.print("fluidsynth error: {}\n", .{err});
+        std.log.err("fluidsynth error: {}", .{err});
         std.process.exit(1);
     }
 }
@@ -123,10 +125,7 @@ fn tcp_conn_handler_thread_fn(client: std.net.Server.Connection, synth: *Synth) 
     stream_thread_fn(reader.interface(), &writer.interface, synth);
 }
 
-fn tcp_server_thread_fn(synth: *Synth) void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-
+fn tcp_server_thread_fn(allocator: std.mem.Allocator, synth: *Synth) void {
     const address = std.net.Address.parseIp4("0.0.0.0", 9999) catch unreachable;
     var server = address.listen(.{}) catch return;
     defer server.deinit();
@@ -150,24 +149,24 @@ pub fn main() !void {
     if (!args.skip()) return error.NoArgs; //to skip the zig call
     const sf2_path = args.next() orelse return error.NoSf2;
 
-    std.debug.print("Loading sf2: {s}\n", .{sf2_path});
+    std.log.info("Loading sf2: {s}", .{sf2_path});
 
     const settings = fs.new_fluid_settings().?;
     defer fs.delete_fluid_settings(settings);
     fluid_check_error(fs.fluid_settings_setint(settings, "midi.autoconnect", 1));
 
-    // fluid_check_error(fs.fluid_settings_setstr(settings, "audio.driver", switch (builtin.os.tag) {
-    //     .windows => "wasapi",
-    //     .macos => "coreaudio",
-    //     else => @panic("OS not supported"),
-    // }));
+    fluid_check_error(fs.fluid_settings_setstr(settings, "audio.driver", switch (builtin.os.tag) {
+        .windows => "wasapi",
+        .macos => "coreaudio",
+        else => @panic("OS not supported"),
+    }));
 
-    // fluid_check_error(fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
-    //     .windows => "winmidi",
-    //     .macos => "coremidi",
-    //     .linux => "oss",
-    //     else => @panic("OS not supported"),
-    // }));
+    fluid_check_error(fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
+        .windows => "winmidi",
+        .macos => "coremidi",
+        .linux => "oss",
+        else => @panic("OS not supported"),
+    }));
 
     const synth = fs.new_fluid_synth(settings) orelse return error.NoSynth;
     var synth_state: Synth = .init(synth);
@@ -180,21 +179,19 @@ pub fn main() !void {
         const preset_name = fs.fluid_preset_get_name(preset);
         const preset_banknum = fs.fluid_preset_get_banknum(preset);
         const preset_num = fs.fluid_preset_get_num(preset);
-        std.debug.print("preset: b{} {} {s}\n", .{ preset_banknum, preset_num, preset_name });
+        std.log.info("preset: b{} {} {s}", .{ preset_banknum, preset_num, preset_name });
     }
 
-    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, synth) orelse return error.NoMidiDriver;
+    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, &synth_state) orelse return error.NoMidiDriver;
     defer fs.delete_fluid_midi_driver(mdriver);
 
     const adriver = fs.new_fluid_audio_driver(settings, synth) orelse return error.NoAudioDriver;
     defer fs.delete_fluid_audio_driver(adriver);
 
-    std.debug.print("adriver: {x}\n", .{@intFromPtr(adriver)});
-
     const stdin_thread = try std.Thread.spawn(.{}, stdin_thread_fn, .{&synth_state});
     stdin_thread.detach();
 
-    const tcp_server_thread = try std.Thread.spawn(.{}, tcp_server_thread_fn, .{&synth_state});
+    const tcp_server_thread = try std.Thread.spawn(.{}, tcp_server_thread_fn, .{ allocator, &synth_state });
     tcp_server_thread.detach();
 
     while (true) {
@@ -202,7 +199,7 @@ pub fn main() !void {
 
         if (synth_state.received_active_sensing) |active_sensing| {
             if (now().since(active_sensing) > 500 * std.time.ns_per_ms) {
-                std.debug.print("active sensing timeout, quitting...\n", .{});
+                std.log.warn("active sensing timeout, quitting...", .{});
                 break;
             }
         }
