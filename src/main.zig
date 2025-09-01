@@ -1,17 +1,27 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const fs = @cImport({
     @cInclude("fluidsynth.h");
 });
 
-inline fn now() std.time.Instant {
+fn now() std.time.Instant {
     return std.time.Instant.now() catch unreachable;
 }
 
 const Synth = struct {
-    synth: *fs.fluid_synth_t = undefined,
-    received_active_sensing: ?std.time.Instant = null,
-    transposition: i32 = 0,
-    touch_disabled: bool = false,
+    synth: *fs.fluid_synth_t,
+    received_active_sensing: ?std.time.Instant,
+    transposition: i32,
+    touch_disabled: bool,
+
+    pub fn init(synth: *fs.fluid_synth_t) Synth {
+        return .{
+            .synth = synth,
+            .received_active_sensing = null,
+            .transposition = 0,
+            .touch_disabled = false,
+        };
+    }
 };
 
 fn handle_midi_event(data: ?*anyopaque, event: ?*fs.fluid_midi_event_t) callconv(.c) c_int {
@@ -53,7 +63,7 @@ fn fluid_check_error(err: c_int) void {
     }
 }
 
-fn handle_cmd(cmd: []const u8, writer: std.io.AnyWriter, synth_state: *Synth) !void {
+fn handle_cmd(cmd: []const u8, writer: *std.io.Writer, synth_state: *Synth) !void {
     const synth = synth_state.synth;
     if (cmd.len == 0) return;
     // std.debug.print("stdin: {s}\n", .{msg});
@@ -84,26 +94,33 @@ fn handle_cmd(cmd: []const u8, writer: std.io.AnyWriter, synth_state: *Synth) !v
         _ = fs.fluid_synth_program_change(synth, 0, program_change);
         try writer.print("pc: {}\n", .{program_change});
     }
+    try writer.flush();
 }
 
-fn stream_thread_fn(reader: std.io.AnyReader, writer: std.io.AnyWriter, synth: *Synth) void {
-    var buf = std.BoundedArray(u8, 1024){};
+fn stream_thread_fn(reader: *std.Io.Reader, writer: *std.Io.Writer, synth: *Synth) void {
     while (true) {
-        buf.clear();
-        reader.streamUntilDelimiter(buf.writer(), '\n', null) catch break;
-        handle_cmd(buf.constSlice(), writer, synth) catch break;
+        const cmd = reader.takeDelimiterExclusive('\n') catch break;
+        handle_cmd(cmd, writer, synth) catch break;
     }
 }
 
 fn stdin_thread_fn(synth: *Synth) void {
-    stream_thread_fn(std.io.getStdIn().reader().any(), std.io.getStdOut().writer().any(), synth);
+    var reader_buffer: [1024]u8 = undefined;
+    var writer_buffer: [1024]u8 = undefined;
+    const stdin = std.fs.File.stdin();
+    const stdout = std.fs.File.stdout();
+    var reader = stdin.reader(&reader_buffer);
+    var writer = stdout.writer(&writer_buffer);
+    stream_thread_fn(&reader.interface, &writer.interface, synth);
 }
 
 fn tcp_conn_handler_thread_fn(client: std.net.Server.Connection, synth: *Synth) void {
     defer client.stream.close();
-    const reader = client.stream.reader().any();
-    const writer = client.stream.writer().any();
-    stream_thread_fn(reader, writer, synth);
+    var reader_buffer: [1024]u8 = undefined;
+    var writer_buffer: [1024]u8 = undefined;
+    var reader = client.stream.reader(&reader_buffer);
+    var writer = client.stream.writer(&writer_buffer);
+    stream_thread_fn(reader.interface(), &writer.interface, synth);
 }
 
 fn tcp_server_thread_fn(synth: *Synth) void {
@@ -125,31 +142,39 @@ fn tcp_server_thread_fn(synth: *Synth) void {
 }
 
 pub fn main() !void {
-    var args = std.process.args();
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
     if (!args.skip()) return error.NoArgs; //to skip the zig call
     const sf2_path = args.next() orelse return error.NoSf2;
 
-    var synth_state = Synth{};
+    std.debug.print("Loading sf2: {s}\n", .{sf2_path});
 
-    const settings = fs.new_fluid_settings();
+    const settings = fs.new_fluid_settings().?;
     defer fs.delete_fluid_settings(settings);
     fluid_check_error(fs.fluid_settings_setint(settings, "midi.autoconnect", 1));
 
+    // fluid_check_error(fs.fluid_settings_setstr(settings, "audio.driver", switch (builtin.os.tag) {
+    //     .windows => "wasapi",
+    //     .macos => "coreaudio",
+    //     else => @panic("OS not supported"),
+    // }));
+
+    // fluid_check_error(fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
+    //     .windows => "winmidi",
+    //     .macos => "coremidi",
+    //     .linux => "oss",
+    //     else => @panic("OS not supported"),
+    // }));
+
     const synth = fs.new_fluid_synth(settings) orelse return error.NoSynth;
-    synth_state.synth = synth;
+    var synth_state: Synth = .init(synth);
     defer fs.delete_fluid_synth(synth);
 
-    fluid_check_error(fs.fluid_settings_setstr(settings, "audio.driver", "coreaudio"));
-    fluid_check_error(fs.fluid_settings_setstr(settings, "midi.driver", "coremidi"));
-
-    const adriver = fs.new_fluid_audio_driver(settings, synth);
-    defer fs.delete_fluid_audio_driver(adriver);
-
-    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, synth);
-    defer fs.delete_fluid_midi_driver(mdriver);
-
     const sfont_id = fs.fluid_synth_sfload(synth, sf2_path, 1);
-    const sfont = fs.fluid_synth_get_sfont_by_id(synth, sfont_id);
+    const sfont = fs.fluid_synth_get_sfont_by_id(synth, sfont_id).?;
     fs.fluid_sfont_iteration_start(sfont);
     while (fs.fluid_sfont_iteration_next(sfont)) |preset| {
         const preset_name = fs.fluid_preset_get_name(preset);
@@ -157,6 +182,14 @@ pub fn main() !void {
         const preset_num = fs.fluid_preset_get_num(preset);
         std.debug.print("preset: b{} {} {s}\n", .{ preset_banknum, preset_num, preset_name });
     }
+
+    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, synth) orelse return error.NoMidiDriver;
+    defer fs.delete_fluid_midi_driver(mdriver);
+
+    const adriver = fs.new_fluid_audio_driver(settings, synth) orelse return error.NoAudioDriver;
+    defer fs.delete_fluid_audio_driver(adriver);
+
+    std.debug.print("adriver: {x}\n", .{@intFromPtr(adriver)});
 
     const stdin_thread = try std.Thread.spawn(.{}, stdin_thread_fn, .{&synth_state});
     stdin_thread.detach();
@@ -169,7 +202,7 @@ pub fn main() !void {
 
         if (synth_state.received_active_sensing) |active_sensing| {
             if (now().since(active_sensing) > 500 * std.time.ns_per_ms) {
-                std.debug.print("active sensing timeout\n", .{});
+                std.debug.print("active sensing timeout, quitting...\n", .{});
                 break;
             }
         }

@@ -1,0 +1,7 @@
+.{
+    .name = .zig_fluidsynth,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.15.1",
+    .paths = .{""},
+    .fingerprint = 0x3a6a7778bfce35e4,
+}
