@@ -65,7 +65,7 @@ fn fluid_check_error(err: c_int) void {
     }
 }
 
-fn handle_cmd(cmd: []const u8, writer: *std.io.Writer, synth_state: *Synth) !void {
+fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !void {
     const synth = synth_state.synth;
     if (cmd.len == 0) return;
     // std.debug.print("stdin: {s}\n", .{msg});
@@ -158,13 +158,14 @@ pub fn main() !void {
     fluid_check_error(fs.fluid_settings_setstr(settings, "audio.driver", switch (builtin.os.tag) {
         .windows => "wasapi",
         .macos => "coreaudio",
+        .linux => "alsa",
         else => @panic("OS not supported"),
     }));
 
     fluid_check_error(fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
         .windows => "winmidi",
         .macos => "coremidi",
-        .linux => "oss",
+        .linux => "alsa_seq",
         else => @panic("OS not supported"),
     }));
 
