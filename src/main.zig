@@ -4,22 +4,49 @@ const fs = @cImport({
     @cInclude("fluidsynth.h");
 });
 
+const MidiEventType = enum(u8) {
+    // channel messages
+    NOTE_OFF = 0x80,
+    NOTE_ON = 0x90,
+    KEY_PRESSURE = 0xa0,
+    CONTROL_CHANGE = 0xb0,
+    PROGRAM_CHANGE = 0xc0,
+    CHANNEL_PRESSURE = 0xd0,
+    PITCH_BEND = 0xe0,
+    // system exclusive
+    SYSEX = 0xf0,
+    // system common
+    TIME_CODE = 0xf1,
+    SONG_POSITION = 0xf2,
+    SONG_SELECT = 0xf3,
+    TUNE_REQUEST = 0xf6,
+    EOX = 0xf7,
+    // system real-time
+    SYNC = 0xf8,
+    TICK = 0xf9,
+    START = 0xfa,
+    CONTINUE = 0xfb,
+    STOP = 0xfc,
+    ACTIVE_SENSING = 0xfe,
+    SYSTEM_RESET = 0xff,
+};
+
 fn now() std.time.Instant {
     return std.time.Instant.now() catch unreachable;
 }
 
 const Synth = struct {
     synth: *fs.fluid_synth_t,
-    start_time: std.time.Instant,
-    received_active_sensing: ?std.time.Instant,
+    timer: std.time.Timer,
+    active_sensing_timer: ?std.time.Timer,
     transposition: i32,
     touch_disabled: bool,
 
     pub fn init(synth: *fs.fluid_synth_t) Synth {
         return .{
             .synth = synth,
-            .start_time = now(),
-            .received_active_sensing = null,
+            .timer = std.time.Timer.start() catch unreachable,
+            .active_sensing_timer = null,
             .transposition = 0,
             .touch_disabled = false,
         };
@@ -28,25 +55,33 @@ const Synth = struct {
 
 fn handle_midi_event(data: ?*anyopaque, event: ?*fs.fluid_midi_event_t) callconv(.c) c_int {
     const synth_state: *Synth = @ptrCast(@alignCast(data));
-    const midi_type = fs.fluid_midi_event_get_type(event);
-    if (midi_type == 0xF8) {
-        return fs.FLUID_OK;
-    } else if (midi_type == 0xFE) {
-        if (synth_state.received_active_sensing == null) std.debug.print("active sensing\n", .{});
-        synth_state.received_active_sensing = now();
+    const midi_type: MidiEventType = @enumFromInt(fs.fluid_midi_event_get_type(event));
+
+    if (midi_type == .SYNC) {
         return fs.FLUID_OK;
     }
+    if (midi_type == .ACTIVE_SENSING) {
+        if (synth_state.active_sensing_timer) |*timer| {
+            timer.reset();
+        } else {
+            std.debug.print("active sensing\n", .{});
+            synth_state.active_sensing_timer = std.time.Timer.start() catch unreachable;
+        }
+        return fs.FLUID_OK;
+    }
+
     const midi_key = fs.fluid_midi_event_get_key(event);
     const midi_vel = fs.fluid_midi_event_get_velocity(event);
 
-    std.log.debug("[{}] event {} {} {}", .{
-        now().since(synth_state.start_time) / std.time.ns_per_ms,
+    std.log.debug("[{}] {t} 0x{X} {} {}", .{
+        synth_state.timer.read() / std.time.ns_per_ms,
+        midi_type,
         midi_type,
         midi_key,
         midi_vel,
     });
 
-    if (midi_type == 144) {
+    if (midi_type == .NOTE_ON or midi_type == .NOTE_OFF) {
         if (synth_state.transposition != 0) {
             _ = fs.fluid_midi_event_set_key(event, midi_key + synth_state.transposition);
         }
@@ -141,6 +176,7 @@ fn tcp_server_thread_fn(allocator: std.mem.Allocator, synth: *Synth) void {
 }
 
 pub fn main() !void {
+    std.log.info("fluidsynth version: {s}\n", .{fs.fluid_version_str()});
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -159,14 +195,14 @@ pub fn main() !void {
         .windows => "wasapi",
         .macos => "coreaudio",
         .linux => "alsa",
-        else => @panic("OS not supported"),
+        else => @compileError("OS not supported"),
     }));
 
     fluid_check_error(fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
         .windows => "winmidi",
         .macos => "coremidi",
         .linux => "alsa_seq",
-        else => @panic("OS not supported"),
+        else => @compileError("OS not supported"),
     }));
 
     const synth = fs.new_fluid_synth(settings) orelse return error.NoSynth;
@@ -198,8 +234,8 @@ pub fn main() !void {
     while (true) {
         std.Thread.sleep(500 * std.time.ns_per_ms);
 
-        if (synth_state.received_active_sensing) |active_sensing| {
-            if (now().since(active_sensing) > 500 * std.time.ns_per_ms) {
+        if (synth_state.active_sensing_timer) |*timer| {
+            if (timer.read() > 500 * std.time.ns_per_ms) {
                 std.log.warn("active sensing timeout, quitting...", .{});
                 break;
             }

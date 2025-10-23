@@ -1,6 +1,19 @@
 .{
     .name = .zig_fluidsynth,
     .version = "0.0.1",
+    .dependencies = .{
+        .fluidsynth_win = .{
+            .url = "https://github.com/FluidSynth/fluidsynth/releases/download/v2.5.0/fluidsynth-v2.5.0-win10-x64-cpp11.zip",
+            .hash = "N-V-__8AACE2EgDLH5sG6_PGibrxb3drJMLMZ0tF5nTA7925",
+            .lazy = true,
+        },
+        .fluidsynth_dlls = .{
+            // FIXME: when https://github.com/FluidSynth/fluidsynth/pull/1689 is merged and a new version is released this dependency can be removed
+            .url = "https://github.com/FluidSynth/fluidsynth/releases/download/v2.4.8/fluidsynth-2.4.8-win10-x64.zip",
+            .hash = "N-V-__8AADTjFQE8iTj6ceP9RwMsD24l8Izn9Cx2zr-Jk25H",
+            .lazy = true,
+        },
+    },
     .minimum_zig_version = "0.15.1",
     .paths = .{""},
     .fingerprint = 0x3a6a7778bfce35e4,

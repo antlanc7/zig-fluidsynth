@@ -1,11 +1,51 @@
 # Zig-Fluidsynth
 
-A CLI Frontend for libfluidsynth
+A **CLI frontend for [FluidSynth](https://www.fluidsynth.org/)**, written in [Zig](https://ziglang.org/).  
 
-Works on terminal but it also expose a TCP server.
+## Features
 
-The project depends on system installed `fluidsynth`, and so it's working only on Unix (tested on MacOS and Linux).  
-On Windows I couldn't figure out a standard way to link fluidsynth.
+- 🎹 Play MIDI keyboard input using a SoundFont file  
+- 🖥️ Simple command-line interface via tty or TCP
+- 🧩 Cross-platform: works on Windows, macOS, and Linux
 
-> TODO: Investigate a way to compile `fluidsynth` with `build.zig` to use it as a dependency with `zig fetch` without dynamic linking (this would work also for Windows).
+## Installation
 
+### Dependencies
+
+This project depends on the **FluidSynth** library.
+
+#### Windows
+A precompiled version of FluidSynth is automatically fetched by the Zig build system.
+
+#### macOS
+Install with Homebrew:
+```bash
+brew install fluid-synth
+```
+
+#### Linux (Debian / Ubuntu)
+Install via apt:
+```bash
+sudo apt install libfluidsynth-dev libfluidsynth3
+```
+
+## Building
+
+Once dependencies are installed:
+
+```bash
+zig build
+```
+
+This produces a runnable binary in `zig-out/bin`.
+
+## Usage
+
+Run the CLI directly:
+
+```bash
+zig-out/bin/zig-fluidsynth path/to/soundfont.sf2
+```
+## License
+
+[MIT License](LICENSE)
