@@ -136,7 +136,8 @@ fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !voi
 
 fn stream_thread_fn(reader: *std.Io.Reader, writer: *std.Io.Writer, synth: *Synth) void {
     while (true) {
-        const cmd = reader.takeDelimiterExclusive('\n') catch break;
+        const line = reader.takeDelimiterInclusive('\n') catch break;
+        const cmd = std.mem.trim(u8, line, &std.ascii.whitespace);
         handle_cmd(cmd, writer, synth) catch break;
     }
 }
