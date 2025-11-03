@@ -1,8 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const fs = @cImport({
-    @cInclude("fluidsynth.h");
-});
+const fs = @import("fluidsynth.zig");
 
 const MidiEventType = enum(u8) {
     // channel messages
@@ -31,10 +29,6 @@ const MidiEventType = enum(u8) {
     SYSTEM_RESET = 0xff,
 };
 
-fn now() std.time.Instant {
-    return std.time.Instant.now() catch unreachable;
-}
-
 const Synth = struct {
     synth: *fs.fluid_synth_t,
     timer: std.time.Timer,
@@ -53,12 +47,12 @@ const Synth = struct {
     }
 };
 
-fn handle_midi_event(data: ?*anyopaque, event: ?*fs.fluid_midi_event_t) callconv(.c) c_int {
+fn handle_midi_event(data: ?*anyopaque, event: *fs.fluid_midi_event_t) callconv(.c) void {
     const synth_state: *Synth = @ptrCast(@alignCast(data));
     const midi_type: MidiEventType = @enumFromInt(fs.fluid_midi_event_get_type(event));
 
     if (midi_type == .SYNC) {
-        return fs.FLUID_OK;
+        return;
     }
     if (midi_type == .ACTIVE_SENSING) {
         if (synth_state.active_sensing_timer) |*timer| {
@@ -67,7 +61,7 @@ fn handle_midi_event(data: ?*anyopaque, event: ?*fs.fluid_midi_event_t) callconv
             std.debug.print("active sensing\n", .{});
             synth_state.active_sensing_timer = std.time.Timer.start() catch unreachable;
         }
-        return fs.FLUID_OK;
+        return;
     }
 
     const midi_key = fs.fluid_midi_event_get_key(event);
@@ -83,21 +77,14 @@ fn handle_midi_event(data: ?*anyopaque, event: ?*fs.fluid_midi_event_t) callconv
 
     if (midi_type == .NOTE_ON or midi_type == .NOTE_OFF) {
         if (synth_state.transposition != 0) {
-            _ = fs.fluid_midi_event_set_key(event, midi_key + synth_state.transposition);
+            fs.fluid_midi_event_set_key(event, midi_key + synth_state.transposition) catch return;
         }
         if (synth_state.touch_disabled and midi_vel != 0) {
-            _ = fs.fluid_midi_event_set_velocity(event, 64);
+            fs.fluid_midi_event_set_velocity(event, 64) catch return;
         }
     }
 
-    return fs.fluid_synth_handle_midi_event(synth_state.synth, event);
-}
-
-fn fluid_check_error(err: c_int) void {
-    if (err != fs.FLUID_OK) {
-        std.log.err("fluidsynth error: {}", .{err});
-        std.process.exit(1);
-    }
+    fs.fluid_synth_handle_midi_event(synth_state.synth, event) catch return;
 }
 
 fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !void {
@@ -105,13 +92,13 @@ fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !voi
     if (cmd.len == 0) return;
     // std.debug.print("stdin: {s}\n", .{msg});
     if (cmd[0] == '+' or cmd[0] == '-') {
-        _ = fs.fluid_synth_all_notes_off(synth, 0);
+        try fs.fluid_synth_all_notes_off(synth, 0);
         synth_state.transposition = std.fmt.parseInt(c_int, cmd, 10) catch 0;
         try writer.print("transpose: {}\n", .{synth_state.transposition});
     } else if (cmd[0] == 'b') {
         const bank = std.fmt.parseUnsigned(c_int, cmd[1..], 10) catch return;
-        _ = fs.fluid_synth_bank_select(synth, 0, bank);
-        _ = fs.fluid_synth_program_reset(synth);
+        try fs.fluid_synth_bank_select(synth, 0, bank);
+        try fs.fluid_synth_program_reset(synth);
         try writer.print("bank: {}\n", .{bank});
     } else if (cmd[0] == 't') {
         synth_state.touch_disabled = !synth_state.touch_disabled;
@@ -128,7 +115,7 @@ fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !voi
         try writer.print("gain: {d:.2}\n", .{gain});
     } else {
         const program_change = std.fmt.parseUnsigned(c_int, cmd, 10) catch return;
-        _ = fs.fluid_synth_program_change(synth, 0, program_change);
+        try fs.fluid_synth_program_change(synth, 0, program_change);
         try writer.print("pc: {}\n", .{program_change});
     }
     try writer.flush();
@@ -188,30 +175,30 @@ pub fn main() !void {
 
     std.log.info("Loading sf2: {s}", .{sf2_path});
 
-    const settings = fs.new_fluid_settings().?;
+    const settings = try fs.new_fluid_settings();
     defer fs.delete_fluid_settings(settings);
-    fluid_check_error(fs.fluid_settings_setint(settings, "midi.autoconnect", 1));
+    try fs.fluid_settings_setint(settings, "midi.autoconnect", 1);
 
-    fluid_check_error(fs.fluid_settings_setstr(settings, "audio.driver", switch (builtin.os.tag) {
+    try fs.fluid_settings_setstr(settings, "audio.driver", switch (builtin.os.tag) {
         .windows => "wasapi",
         .macos => "coreaudio",
         .linux => "alsa",
         else => @compileError("OS not supported"),
-    }));
+    });
 
-    fluid_check_error(fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
+    try fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
         .windows => "winmidi",
         .macos => "coremidi",
         .linux => "alsa_seq",
         else => @compileError("OS not supported"),
-    }));
+    });
 
-    const synth = fs.new_fluid_synth(settings) orelse return error.NoSynth;
+    const synth = fs.new_fluid_synth(settings) catch return error.NoSynth;
     var synth_state: Synth = .init(synth);
     defer fs.delete_fluid_synth(synth);
 
-    const sfont_id = fs.fluid_synth_sfload(synth, sf2_path, 1);
-    const sfont = fs.fluid_synth_get_sfont_by_id(synth, sfont_id).?;
+    const sfont_id = try fs.fluid_synth_sfload(synth, sf2_path, true);
+    const sfont = try fs.fluid_synth_get_sfont_by_id(synth, sfont_id);
     fs.fluid_sfont_iteration_start(sfont);
     while (fs.fluid_sfont_iteration_next(sfont)) |preset| {
         const preset_name = fs.fluid_preset_get_name(preset);
@@ -220,10 +207,10 @@ pub fn main() !void {
         std.log.info("preset: b{} {} {s}", .{ preset_banknum, preset_num, preset_name });
     }
 
-    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, &synth_state) orelse return error.NoMidiDriver;
+    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, &synth_state) catch return error.NoMidiDriver;
     defer fs.delete_fluid_midi_driver(mdriver);
 
-    const adriver = fs.new_fluid_audio_driver(settings, synth) orelse return error.NoAudioDriver;
+    const adriver = fs.new_fluid_audio_driver(settings, synth) catch return error.NoAudioDriver;
     defer fs.delete_fluid_audio_driver(adriver);
 
     const stdin_thread = try std.Thread.spawn(.{}, stdin_thread_fn, .{&synth_state});
