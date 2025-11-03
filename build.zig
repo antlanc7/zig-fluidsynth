@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -15,7 +14,7 @@ pub fn build(b: *std.Build) void {
     const exe_check = b.addExecutable(.{ .name = "zig_fluidsynth_check", .root_module = exe_mod });
     b.step("check", "compile zig_fluidsynth to check for compile errors").dependOn(&exe_check.step);
 
-    if (builtin.os.tag == .windows) {
+    if (target.result.os.tag == .windows) {
         if (b.lazyDependency("fluidsynth_win", .{})) |fluidsynth| {
             exe_mod.addIncludePath(fluidsynth.path("include"));
             exe_mod.addLibraryPath(fluidsynth.path("lib"));
