@@ -113,6 +113,8 @@ fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !voi
         }
         const gain = fs.fluid_synth_get_gain(synth);
         try writer.print("gain: {d:.2}\n", .{gain});
+    } else if (cmd[0] == 'q') {
+        return error.End;
     } else {
         const program_change = std.fmt.parseUnsigned(c_int, cmd, 10) catch return;
         try fs.fluid_synth_program_change(synth, 0, program_change);
@@ -121,55 +123,103 @@ fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !voi
     try writer.flush();
 }
 
-fn stream_thread_fn(reader: *std.Io.Reader, writer: *std.Io.Writer, synth: *Synth) void {
+fn stream_thread_fn(reader: *std.Io.Reader, writer: *std.Io.Writer, synth: *Synth) !void {
     while (true) {
-        const line = reader.takeDelimiterInclusive('\n') catch break;
+        const line = try reader.takeDelimiterInclusive('\n');
         const cmd = std.mem.trim(u8, line, &std.ascii.whitespace);
-        handle_cmd(cmd, writer, synth) catch break;
+        try handle_cmd(cmd, writer, synth);
     }
 }
 
-fn stdin_thread_fn(synth: *Synth) void {
+fn stdin_thread_fn(io: std.Io, synth: *Synth) std.Io.Cancelable!void {
     var reader_buffer: [1024]u8 = undefined;
     var writer_buffer: [1024]u8 = undefined;
-    const stdin = std.fs.File.stdin();
-    const stdout = std.fs.File.stdout();
-    var reader = stdin.reader(&reader_buffer);
-    var writer = stdout.writer(&writer_buffer);
-    stream_thread_fn(&reader.interface, &writer.interface, synth);
+    const stdin = std.Io.File.stdin();
+    const stdout = std.Io.File.stdout();
+    var reader = stdin.reader(io, &reader_buffer);
+    var writer = stdout.writer(io, &writer_buffer);
+    stream_thread_fn(&reader.interface, &writer.interface, synth) catch |err| {
+        std.log.err("stdin stream_thread_fn: {t}", .{err});
+        switch (err) {
+            error.ReadFailed => if (reader.err) |e| switch (e) {
+                error.Canceled => return error.Canceled,
+                else => {},
+            },
+            else => {},
+        }
+    };
 }
 
-fn tcp_conn_handler_thread_fn(client: std.net.Server.Connection, synth: *Synth) void {
-    defer client.stream.close();
+var i: usize = 0;
+fn tcp_conn_handler_thread_fn(io: std.Io, client: std.Io.net.Stream, synth: *Synth) std.Io.Cancelable!void {
+    const index = i;
+    std.log.debug("tcp stream_thread_fn {} start", .{index});
+    i += 1;
+    defer client.close(io);
     var reader_buffer: [1024]u8 = undefined;
     var writer_buffer: [1024]u8 = undefined;
-    var reader = client.stream.reader(&reader_buffer);
-    var writer = client.stream.writer(&writer_buffer);
-    stream_thread_fn(reader.interface(), &writer.interface, synth);
+    var reader = client.reader(io, &reader_buffer);
+    var writer = client.writer(io, &writer_buffer);
+    stream_thread_fn(&reader.interface, &writer.interface, synth) catch |err| {
+        std.log.err("tcp stream_thread_fn {}: {t}", .{ index, err });
+        if (reader.err) |e| switch (e) {
+            error.Canceled => |c| return c,
+            else => {},
+        };
+    };
 }
 
-fn tcp_server_thread_fn(allocator: std.mem.Allocator, synth: *Synth) void {
-    const address = std.net.Address.parseIp4("0.0.0.0", 9999) catch unreachable;
-    var server = address.listen(.{}) catch return;
-    defer server.deinit();
+fn tcp_server_thread_fn(io: std.Io, synth: *Synth) std.Io.Cancelable!void {
+    const address: std.Io.net.IpAddress = .{ .ip4 = .unspecified(9999) };
+    var server = address.listen(io, .{}) catch |err| {
+        std.log.err("listen failed: {t}", .{err});
+        switch (err) {
+            error.Canceled => return error.Canceled,
+            else => return,
+        }
+    };
+    defer server.deinit(io);
 
-    var pool: std.Thread.Pool = undefined;
-    pool.init(std.Thread.Pool.Options{ .allocator = allocator, .n_jobs = 5 }) catch return;
-    defer pool.deinit();
+    var group: std.Io.Group = .init;
+    defer group.cancel(io);
 
     while (true) {
-        const client = server.accept() catch break;
-        pool.spawn(tcp_conn_handler_thread_fn, .{ client, synth }) catch break;
+        std.log.debug("accept...", .{});
+        const client = server.accept(io) catch |err| {
+            std.log.err("accept failed: {t}", .{err});
+            switch (err) {
+                error.Canceled => {
+                    std.log.debug("accept canceled", .{});
+                    return error.Canceled;
+                },
+                else => continue,
+            }
+        };
+        std.log.info("accept success", .{});
+        group.concurrent(io, tcp_conn_handler_thread_fn, .{ io, client, synth }) catch unreachable;
     }
 }
 
-pub fn main() !void {
-    std.log.info("fluidsynth version: {s}\n", .{fs.fluid_version_str()});
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+fn active_sensing_thread_fn(io: std.Io, synth_state: *Synth) std.Io.Cancelable!void {
+    while (true) {
+        io.sleep(.fromMilliseconds(500), .boot) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            else => return,
+        };
+
+        if (synth_state.active_sensing_timer) |*timer| {
+            if (timer.read() > 500 * std.time.ns_per_ms) {
+                std.log.warn("active sensing timeout, quitting...", .{});
+                break;
+            }
+        }
+    }
+}
+
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    std.log.info("fluidsynth version: {s}", .{fs.fluid_version_str()});
+    var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
     if (!args.skip()) return error.NoArgs; //to skip the zig call
     const sf2_path = args.next() orelse return error.NoSf2;
 
@@ -213,20 +263,14 @@ pub fn main() !void {
     const adriver = fs.new_fluid_audio_driver(settings, synth) catch return error.NoAudioDriver;
     defer fs.delete_fluid_audio_driver(adriver);
 
-    const stdin_thread = try std.Thread.spawn(.{}, stdin_thread_fn, .{&synth_state});
-    stdin_thread.detach();
+    var stdin_future = try io.concurrent(stdin_thread_fn, .{ io, &synth_state });
+    defer stdin_future.cancel(io) catch {};
 
-    const tcp_server_thread = try std.Thread.spawn(.{}, tcp_server_thread_fn, .{ allocator, &synth_state });
-    tcp_server_thread.detach();
+    var tcp_future = try io.concurrent(tcp_server_thread_fn, .{ io, &synth_state });
+    defer tcp_future.cancel(io) catch {};
 
-    while (true) {
-        std.Thread.sleep(500 * std.time.ns_per_ms);
+    var active_sensing_future = try io.concurrent(active_sensing_thread_fn, .{ io, &synth_state });
+    defer active_sensing_future.cancel(io) catch {};
 
-        if (synth_state.active_sensing_timer) |*timer| {
-            if (timer.read() > 500 * std.time.ns_per_ms) {
-                std.log.warn("active sensing timeout, quitting...", .{});
-                break;
-            }
-        }
-    }
+    _ = try io.select(.{ &stdin_future, &tcp_future, &active_sensing_future });
 }
