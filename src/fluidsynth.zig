@@ -12,8 +12,8 @@ fn fluid_check_error(err: c_int) !void {
     }
 }
 
-pub fn fluid_version_str() [:0]const u8 {
-    return std.mem.span(c.fluid_version_str());
+pub fn fluid_version_str() [*:0]const u8 {
+    return c.fluid_version_str();
 }
 
 pub fn fluid_midi_event_get_type(evt: *const c.fluid_midi_event_t) u8 {
@@ -62,8 +62,8 @@ pub fn fluid_sfont_iteration_next(sfont: *c.fluid_sfont_t) ?*c.fluid_preset_t {
     return c.fluid_sfont_iteration_next(sfont);
 }
 
-pub fn fluid_preset_get_name(preset: *c.fluid_preset_t) [:0]const u8 {
-    return std.mem.span(c.fluid_preset_get_name(preset));
+pub fn fluid_preset_get_name(preset: *c.fluid_preset_t) [*:0]const u8 {
+    return c.fluid_preset_get_name(preset);
 }
 
 pub fn fluid_preset_get_banknum(preset: *c.fluid_preset_t) usize {
