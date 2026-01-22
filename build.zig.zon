@@ -3,12 +3,12 @@
     .version = "0.0.1",
     .dependencies = .{
         .fluidsynth_win = .{
-            .url = "https://github.com/FluidSynth/fluidsynth/releases/download/v2.5.1/fluidsynth-v2.5.1-win10-x64-cpp11.zip",
-            .hash = "N-V-__8AACNgXwAGk_ee54YeX_01texpcDpdU1hfBjEtxK2j",
+            .url = "https://github.com/FluidSynth/fluidsynth/releases/download/v2.5.2/fluidsynth-v2.5.2-win10-x64-cpp11.zip",
+            .hash = "N-V-__8AACNgXwBIQ4vWWgWUawr4DU0urNNlqJ3A5JpvbjPe",
             .lazy = true,
         },
     },
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0-dev.2261",
     .paths = .{""},
     .fingerprint = 0x3a6a7778bfce35e4,
 }
