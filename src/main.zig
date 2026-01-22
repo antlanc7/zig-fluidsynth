@@ -138,64 +138,62 @@ fn stdin_thread_fn(io: std.Io, synth: *Synth) std.Io.Cancelable!void {
     const stdout = std.Io.File.stdout();
     var reader = stdin.reader(io, &reader_buffer);
     var writer = stdout.writer(io, &writer_buffer);
-    stream_thread_fn(&reader.interface, &writer.interface, synth) catch |err| {
-        std.log.err("stdin stream_thread_fn: {t}", .{err});
-        switch (err) {
-            error.ReadFailed => if (reader.err) |e| switch (e) {
-                error.Canceled => return error.Canceled,
-                else => {},
+    stream_thread_fn(&reader.interface, &writer.interface, synth) catch |err| switch (err) {
+        error.ReadFailed => if (reader.err) |e| switch (e) {
+            error.Canceled => return error.Canceled,
+            else => {
+                std.log.err("stdin_thread_fn: {t}", .{e});
+                return;
             },
-            else => {},
-        }
+        },
+        error.EndOfStream, error.End => return,
+        else => {},
     };
 }
 
-var i: usize = 0;
 fn tcp_conn_handler_thread_fn(io: std.Io, client: std.Io.net.Stream, synth: *Synth) std.Io.Cancelable!void {
-    const index = i;
-    std.log.debug("tcp stream_thread_fn {} start", .{index});
-    i += 1;
-    defer client.close(io);
+    defer {
+        std.log.debug("tcp client disconnected: {f}", .{client.socket.address});
+        client.close(io);
+    }
+    std.log.debug("tcp client connected: {f}", .{client.socket.address});
     var reader_buffer: [1024]u8 = undefined;
     var writer_buffer: [1024]u8 = undefined;
     var reader = client.reader(io, &reader_buffer);
     var writer = client.writer(io, &writer_buffer);
-    stream_thread_fn(&reader.interface, &writer.interface, synth) catch |err| {
-        std.log.err("tcp stream_thread_fn {}: {t}", .{ index, err });
-        if (reader.err) |e| switch (e) {
+    stream_thread_fn(&reader.interface, &writer.interface, synth) catch |err| switch (err) {
+        error.ReadFailed => if (reader.err) |r_err| switch (r_err) {
             error.Canceled => |c| return c,
-            else => {},
-        };
+            else => |e| std.log.err("tcp stream_thread_fn reader err: {t}", .{e}),
+        },
+        error.EndOfStream, error.End => return,
+        else => |e| std.log.err("tcp stream_thread_fn: {t}", .{e}),
     };
 }
 
 fn tcp_server_thread_fn(io: std.Io, synth: *Synth) std.Io.Cancelable!void {
     const address: std.Io.net.IpAddress = .{ .ip4 = .unspecified(9999) };
-    var server = address.listen(io, .{}) catch |err| {
-        std.log.err("listen failed: {t}", .{err});
-        switch (err) {
-            error.Canceled => return error.Canceled,
-            else => return,
-        }
+    var server = address.listen(io, .{}) catch |err| switch (err) {
+        error.Canceled => |c| return c,
+        else => |e| {
+            std.log.err("listen failed: {t}", .{e});
+            return;
+        },
     };
     defer server.deinit(io);
 
     var group: std.Io.Group = .init;
     defer group.cancel(io);
 
+    std.log.debug("tcp thread accepting...", .{});
     while (true) {
-        std.log.debug("accept...", .{});
-        const client = server.accept(io) catch |err| {
-            std.log.err("accept failed: {t}", .{err});
-            switch (err) {
-                error.Canceled => {
-                    std.log.debug("accept canceled", .{});
-                    return error.Canceled;
-                },
-                else => continue,
-            }
+        const client = server.accept(io) catch |err| switch (err) {
+            error.Canceled => |c| return c,
+            else => |e| {
+                std.log.err("accept failed: {t}", .{e});
+                continue;
+            },
         };
-        std.log.info("accept success", .{});
         group.concurrent(io, tcp_conn_handler_thread_fn, .{ io, client, synth }) catch unreachable;
     }
 }
@@ -204,7 +202,10 @@ fn active_sensing_thread_fn(io: std.Io, synth_state: *Synth) std.Io.Cancelable!v
     while (true) {
         io.sleep(.fromMilliseconds(500), .boot) catch |err| switch (err) {
             error.Canceled => return error.Canceled,
-            else => return,
+            else => |e| {
+                std.log.err("active_sensing_thread_fn: {t}", .{e});
+                return;
+            },
         };
 
         if (synth_state.active_sensing_timer) |*timer| {
@@ -215,6 +216,20 @@ fn active_sensing_thread_fn(io: std.Io, synth_state: *Synth) std.Io.Cancelable!v
         }
     }
 }
+
+const audio_driver = switch (builtin.os.tag) {
+    .windows => "wasapi",
+    .macos => "coreaudio",
+    .linux => "alsa",
+    else => @compileError("OS not supported"),
+};
+
+const midi_driver = switch (builtin.os.tag) {
+    .windows => "winmidi",
+    .macos => "coremidi",
+    .linux => "alsa_seq",
+    else => @compileError("OS not supported"),
+};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -228,20 +243,8 @@ pub fn main(init: std.process.Init) !void {
     const settings = try fs.new_fluid_settings();
     defer fs.delete_fluid_settings(settings);
     try fs.fluid_settings_setint(settings, "midi.autoconnect", 1);
-
-    try fs.fluid_settings_setstr(settings, "audio.driver", switch (builtin.os.tag) {
-        .windows => "wasapi",
-        .macos => "coreaudio",
-        .linux => "alsa",
-        else => @compileError("OS not supported"),
-    });
-
-    try fs.fluid_settings_setstr(settings, "midi.driver", switch (builtin.os.tag) {
-        .windows => "winmidi",
-        .macos => "coremidi",
-        .linux => "alsa_seq",
-        else => @compileError("OS not supported"),
-    });
+    try fs.fluid_settings_setstr(settings, "audio.driver", audio_driver);
+    try fs.fluid_settings_setstr(settings, "midi.driver", midi_driver);
 
     const synth = fs.new_fluid_synth(settings) catch return error.NoSynth;
     var synth_state: Synth = .init(synth);
@@ -257,8 +260,11 @@ pub fn main(init: std.process.Init) !void {
         std.log.info("preset: b{} {} {s}", .{ preset_banknum, preset_num, preset_name });
     }
 
-    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, &synth_state) catch return error.NoMidiDriver;
-    defer fs.delete_fluid_midi_driver(mdriver);
+    const mdriver = fs.new_fluid_midi_driver(settings, handle_midi_event, &synth_state);
+    if (mdriver == null) {
+        std.log.err("No MIDI device found", .{});
+    }
+    defer if (mdriver) |md| fs.delete_fluid_midi_driver(md);
 
     const adriver = fs.new_fluid_audio_driver(settings, synth) catch return error.NoAudioDriver;
     defer fs.delete_fluid_audio_driver(adriver);
@@ -272,5 +278,11 @@ pub fn main(init: std.process.Init) !void {
     var active_sensing_future = try io.concurrent(active_sensing_thread_fn, .{ io, &synth_state });
     defer active_sensing_future.cancel(io) catch {};
 
-    _ = try io.select(.{ &stdin_future, &tcp_future, &active_sensing_future });
+    _ = try io.select(.{
+        &stdin_future,
+        &tcp_future,
+        &active_sensing_future,
+    });
+
+    std.log.info("quitting...", .{});
 }

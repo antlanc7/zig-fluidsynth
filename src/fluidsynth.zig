@@ -76,8 +76,8 @@ pub fn fluid_preset_get_num(preset: *c.fluid_preset_t) usize {
 
 const cb = *const fn (data: ?*anyopaque, event: *c.fluid_midi_event_t) callconv(.c) void;
 
-pub fn new_fluid_midi_driver(settings: *c.fluid_settings_t, handler: cb, event_handler_data: ?*anyopaque) !*c.fluid_midi_driver_t {
-    return c.new_fluid_midi_driver(settings, @ptrCast(handler), event_handler_data) orelse return error.FluidSynthError;
+pub fn new_fluid_midi_driver(settings: *c.fluid_settings_t, handler: cb, event_handler_data: ?*anyopaque) ?*c.fluid_midi_driver_t {
+    return c.new_fluid_midi_driver(settings, @ptrCast(handler), event_handler_data);
 }
 
 pub fn delete_fluid_midi_driver(driver: *c.fluid_midi_driver_t) void {
