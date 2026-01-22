@@ -113,7 +113,7 @@ fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !voi
         }
         const gain = fs.fluid_synth_get_gain(synth);
         try writer.print("gain: {d:.2}\n", .{gain});
-    } else if (cmd[0] == 'q') {
+    } else if (std.mem.eql(u8, cmd, "q")) {
         return error.End;
     } else {
         const program_change = std.fmt.parseUnsigned(c_int, cmd, 10) catch return;
