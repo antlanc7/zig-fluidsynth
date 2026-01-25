@@ -2,3 +2,4 @@
 zig-out
 .zig-cache
 *.sf2
+*.sf3
