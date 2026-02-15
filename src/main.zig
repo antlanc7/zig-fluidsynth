@@ -30,16 +30,18 @@ const MidiEventType = enum(u8) {
 };
 
 const Synth = struct {
+    io: std.Io,
     synth: *fs.fluid_synth_t,
-    timer: std.time.Timer,
-    active_sensing_timer: ?std.time.Timer,
+    timer: std.Io.Timestamp,
+    active_sensing_timer: ?std.Io.Timestamp,
     transposition: i32,
     touch_disabled: bool,
 
-    pub fn init(synth: *fs.fluid_synth_t) Synth {
+    pub fn init(synth: *fs.fluid_synth_t, io: std.Io) Synth {
         return .{
+            .io = io,
             .synth = synth,
-            .timer = std.time.Timer.start() catch unreachable,
+            .timer = .now(io, .boot),
             .active_sensing_timer = null,
             .transposition = 0,
             .touch_disabled = false,
@@ -55,12 +57,8 @@ fn handle_midi_event(data: ?*anyopaque, event: *fs.fluid_midi_event_t) callconv(
         return;
     }
     if (midi_type == .ACTIVE_SENSING) {
-        if (synth_state.active_sensing_timer) |*timer| {
-            timer.reset();
-        } else {
-            std.debug.print("active sensing\n", .{});
-            synth_state.active_sensing_timer = std.time.Timer.start() catch unreachable;
-        }
+        if (synth_state.active_sensing_timer == null) std.log.info("active sensing", .{});
+        synth_state.active_sensing_timer = .now(synth_state.io, .boot);
         return;
     }
 
@@ -68,7 +66,7 @@ fn handle_midi_event(data: ?*anyopaque, event: *fs.fluid_midi_event_t) callconv(
     const midi_vel = fs.fluid_midi_event_get_velocity(event);
 
     std.log.debug("[{}] {t} 0x{X} {} {}", .{
-        synth_state.timer.read() / std.time.ns_per_ms,
+        synth_state.timer.untilNow(synth_state.io, .boot).toMilliseconds(),
         midi_type,
         midi_type,
         midi_key,
@@ -90,7 +88,6 @@ fn handle_midi_event(data: ?*anyopaque, event: *fs.fluid_midi_event_t) callconv(
 fn handle_cmd(cmd: []const u8, writer: *std.Io.Writer, synth_state: *Synth) !void {
     const synth = synth_state.synth;
     if (cmd.len == 0) return;
-    // std.debug.print("stdin: {s}\n", .{msg});
     if (cmd[0] == '+' or cmd[0] == '-') {
         try fs.fluid_synth_all_notes_off(synth, 0);
         synth_state.transposition = std.fmt.parseInt(c_int, cmd, 10) catch 0;
@@ -199,17 +196,12 @@ fn tcp_server_thread_fn(io: std.Io, synth: *Synth) std.Io.Cancelable!void {
 }
 
 fn active_sensing_thread_fn(io: std.Io, synth_state: *Synth) std.Io.Cancelable!void {
+    const interval: std.Io.Duration = .fromMilliseconds(500);
     while (true) {
-        io.sleep(.fromMilliseconds(500), .boot) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            else => |e| {
-                std.log.err("active_sensing_thread_fn: {t}", .{e});
-                return;
-            },
-        };
+        try io.sleep(interval, .boot);
 
         if (synth_state.active_sensing_timer) |*timer| {
-            if (timer.read() > 500 * std.time.ns_per_ms) {
+            if (timer.untilNow(synth_state.io, .boot).nanoseconds > interval.nanoseconds) {
                 std.log.warn("active sensing timeout, quitting...", .{});
                 break;
             }
@@ -247,7 +239,7 @@ pub fn main(init: std.process.Init) !void {
     try fs.fluid_settings_setstr(settings, "midi.driver", midi_driver);
 
     const synth = fs.new_fluid_synth(settings) catch return error.NoSynth;
-    var synth_state: Synth = .init(synth);
+    var synth_state: Synth = .init(synth, io);
     defer fs.delete_fluid_synth(synth);
 
     const sfont_id = try fs.fluid_synth_sfload(synth, sf2_path, true);
