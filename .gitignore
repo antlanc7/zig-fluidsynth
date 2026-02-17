@@ -1,4 +1,5 @@
 .DS_Store
+zig-pkg
 zig-out
 .zig-cache
 *.sf2
