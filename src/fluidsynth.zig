@@ -16,6 +16,16 @@ pub fn fluid_version_str() [*:0]const u8 {
     return c.fluid_version_str();
 }
 
+pub const FLUID_PANIC = c.FLUID_PANIC;
+pub const FLUID_ERR = c.FLUID_ERR;
+pub const FLUID_WARN = c.FLUID_WARN;
+pub const FLUID_INFO = c.FLUID_INFO;
+pub const FLUID_DBG = c.FLUID_DBG;
+
+pub fn fluid_set_log_function(level: c_int, fun: c.fluid_log_function_t, data: ?*anyopaque) c.fluid_log_function_t {
+    return c.fluid_set_log_function(level, fun, data);
+}
+
 pub fn fluid_midi_event_get_type(evt: *const c.fluid_midi_event_t) u8 {
     return @intCast(c.fluid_midi_event_get_type(evt));
 }
