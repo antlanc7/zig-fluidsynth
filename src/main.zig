@@ -277,14 +277,14 @@ fn active_sensing_thread_fn(io: Io, synth_state: *Synth) Io.Cancelable!void {
     }
 }
 
-const audio_driver = switch (builtin.os.tag) {
+const audio_driver = switch (builtin.target.os.tag) {
     .windows => "wasapi",
     .macos => "coreaudio",
     .linux => "alsa",
     else => @compileError("OS not supported"),
 };
 
-const midi_driver = switch (builtin.os.tag) {
+const midi_driver = switch (builtin.target.os.tag) {
     .windows => "winmidi",
     .macos => "coremidi",
     .linux => "alsa_seq",

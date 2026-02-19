@@ -8,7 +8,7 @@
             .lazy = true,
         },
     },
-    .minimum_zig_version = "0.16.0-dev.2623",
+    .minimum_zig_version = "0.16.0-dev.2637+6a9510c0e",
     .paths = .{ "src", "build.zig", "build.zig.zon", "LICENSE", "README.md" },
     .fingerprint = 0x3a6a7778bfce35e4,
 }
