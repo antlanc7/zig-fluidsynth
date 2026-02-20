@@ -7,6 +7,10 @@
             .hash = "N-V-__8AACNgXwBIQ4vWWgWUawr4DU0urNNlqJ3A5JpvbjPe",
             .lazy = true,
         },
+        .dvui = .{
+            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#fb0aac213d799902cac2a1135c92b9696d845409",
+            .hash = "dvui-0.4.0-dev-AQFJmadq2ABKTzZngc-HtFYGOqMfIE87SK9jqDWxmzBh",
+        },
     },
     .minimum_zig_version = "0.16.0-dev.2637+6a9510c0e",
     .paths = .{ "src", "build.zig", "build.zig.zon", "LICENSE", "README.md" },

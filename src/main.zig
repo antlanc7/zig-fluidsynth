@@ -1,35 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const fs = @import("fluidsynth.zig");
+const fs = @import("fluidsynth");
 const Io = std.Io;
 const Select = @import("Select.zig").Select;
-
-const MidiEventType = enum(u8) {
-    // channel messages
-    NOTE_OFF = 0x80,
-    NOTE_ON = 0x90,
-    KEY_PRESSURE = 0xa0,
-    CONTROL_CHANGE = 0xb0,
-    PROGRAM_CHANGE = 0xc0,
-    CHANNEL_PRESSURE = 0xd0,
-    PITCH_BEND = 0xe0,
-    // system exclusive
-    SYSEX = 0xf0,
-    // system common
-    TIME_CODE = 0xf1,
-    SONG_POSITION = 0xf2,
-    SONG_SELECT = 0xf3,
-    TUNE_REQUEST = 0xf6,
-    EOX = 0xf7,
-    // system real-time
-    SYNC = 0xf8,
-    TICK = 0xf9,
-    START = 0xfa,
-    CONTINUE = 0xfb,
-    STOP = 0xfc,
-    ACTIVE_SENSING = 0xfe,
-    SYSTEM_RESET = 0xff,
-};
 
 const Synth = struct {
     io: Io,
@@ -54,7 +27,7 @@ const Synth = struct {
 fn handle_midi_event(data: ?*anyopaque, event: *fs.fluid_midi_event_t) callconv(.c) void {
     const log = std.log.scoped(.midi_event);
     const synth_state: *Synth = @ptrCast(@alignCast(data));
-    const midi_type = std.enums.fromInt(MidiEventType, fs.fluid_midi_event_get_type(event)) orelse return;
+    const midi_type = std.enums.fromInt(fs.MidiEventType, fs.fluid_midi_event_get_type(event)) orelse return;
 
     if (midi_type == .SYNC) {
         return;

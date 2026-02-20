@@ -3,6 +3,33 @@ const c = @cImport({
     @cInclude("fluidsynth.h");
 });
 
+pub const MidiEventType = enum(u8) {
+    // channel messages
+    NOTE_OFF = 0x80,
+    NOTE_ON = 0x90,
+    KEY_PRESSURE = 0xa0,
+    CONTROL_CHANGE = 0xb0,
+    PROGRAM_CHANGE = 0xc0,
+    CHANNEL_PRESSURE = 0xd0,
+    PITCH_BEND = 0xe0,
+    // system exclusive
+    SYSEX = 0xf0,
+    // system common
+    TIME_CODE = 0xf1,
+    SONG_POSITION = 0xf2,
+    SONG_SELECT = 0xf3,
+    TUNE_REQUEST = 0xf6,
+    EOX = 0xf7,
+    // system real-time
+    SYNC = 0xf8,
+    TICK = 0xf9,
+    START = 0xfa,
+    CONTINUE = 0xfb,
+    STOP = 0xfc,
+    ACTIVE_SENSING = 0xfe,
+    SYSTEM_RESET = 0xff,
+};
+
 pub const fluid_synth_t = c.fluid_synth_t;
 pub const fluid_midi_event_t = c.fluid_midi_event_t;
 
