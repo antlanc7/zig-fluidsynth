@@ -2,7 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const fs = @import("fluidsynth");
 const Io = std.Io;
-const Select = @import("Select.zig").Select;
 
 const Synth = struct {
     io: Io,
@@ -333,13 +332,13 @@ pub fn main(init: std.process.Init) !void {
 
     const TasksEnum = enum { stdin, tcp, active_sensing };
     const TasksUnion = union(TasksEnum) {
-        stdin: void,
-        tcp: void,
-        active_sensing: void,
+        stdin: Io.Cancelable!void,
+        tcp: Io.Cancelable!void,
+        active_sensing: Io.Cancelable!void,
     };
 
     var group_buffer: [3]TasksUnion = undefined;
-    var group = Select(TasksUnion).init(io, &group_buffer);
+    var group = Io.Select(TasksUnion).init(io, &group_buffer);
     defer group.cancel();
     try group.concurrent(.stdin, stdin_thread_fn, .{ io, &synth_state });
     if (builtin.target.os.tag != .windows) {
