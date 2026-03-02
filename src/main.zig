@@ -330,16 +330,15 @@ pub fn main(init: std.process.Init) !void {
     const adriver = fs.new_fluid_audio_driver(settings, synth) catch return error.NoAudioDriver;
     defer fs.delete_fluid_audio_driver(adriver);
 
-    const TasksEnum = enum { stdin, tcp, active_sensing };
-    const TasksUnion = union(TasksEnum) {
+    const TasksUnion = union(enum) {
         stdin: Io.Cancelable!void,
         tcp: Io.Cancelable!void,
         active_sensing: Io.Cancelable!void,
     };
 
-    var group_buffer: [3]TasksUnion = undefined;
+    var group_buffer: [1]TasksUnion = undefined;
     var group = Io.Select(TasksUnion).init(io, &group_buffer);
-    defer group.cancel();
+    defer group.cancelDiscard();
     try group.concurrent(.stdin, stdin_thread_fn, .{ io, &synth_state });
     if (builtin.target.os.tag != .windows) {
         // TODO: tcp server accept on windows fails to be canceled https://codeberg.org/ziglang/zig/issues/30865
