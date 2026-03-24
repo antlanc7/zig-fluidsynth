@@ -12,7 +12,7 @@
             .hash = "dvui-0.4.0-dev-AQFJmadq2ABKTzZngc-HtFYGOqMfIE87SK9jqDWxmzBh",
         },
     },
-    .minimum_zig_version = "0.16.0-dev.2682+02142a54d",
+    .minimum_zig_version = "0.16.0-dev.2973+06b85a4fd",
     .paths = .{ "src", "build.zig", "build.zig.zon", "LICENSE", "README.md" },
     .fingerprint = 0x3a6a7778bfce35e4,
 }

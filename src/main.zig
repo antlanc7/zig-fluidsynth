@@ -340,11 +340,7 @@ pub fn main(init: std.process.Init) !void {
     var group = Io.Select(TasksUnion).init(io, &group_buffer);
     defer group.cancelDiscard();
     try group.concurrent(.stdin, stdin_thread_fn, .{ io, &synth_state });
-    if (builtin.target.os.tag != .windows) {
-        // TODO: tcp server accept on windows fails to be canceled https://codeberg.org/ziglang/zig/issues/30865
-        // for now we just don't support tcp server on windows
-        try group.concurrent(.tcp, tcp_server_thread_fn, .{ io, &synth_state });
-    }
+    try group.concurrent(.tcp, tcp_server_thread_fn, .{ io, &synth_state });
     try group.concurrent(.active_sensing, active_sensing_thread_fn, .{ io, &synth_state });
 
     const quitted = try group.await(); // await first task to exit
