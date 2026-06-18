@@ -3,16 +3,16 @@
     .version = "0.0.1",
     .dependencies = .{
         .fluidsynth_win = .{
-            .url = "https://github.com/FluidSynth/fluidsynth/releases/download/v2.5.2/fluidsynth-v2.5.2-win10-x64-cpp11.zip",
+            .url = "https://github.com/FluidSynth/fluidsynth/releases/download/v2.5.5/fluidsynth-v2.5.5-win10-x64-cpp11.zip",
             .hash = "N-V-__8AACNgXwBIQ4vWWgWUawr4DU0urNNlqJ3A5JpvbjPe",
             .lazy = true,
         },
         .dvui = .{
-            .url = "git+https://github.com/david-vanderson/dvui?ref=zig16-dev#fb0aac213d799902cac2a1135c92b9696d845409",
-            .hash = "dvui-0.4.0-dev-AQFJmadq2ABKTzZngc-HtFYGOqMfIE87SK9jqDWxmzBh",
+            .url = "git+https://github.com/david-vanderson/dvui#11919255d47f206a7afd30a3ebbf99f6981a6648",
+            .hash = "dvui-0.5.0-dev-AQFJmV489wDFExOz_QkU1bj8cQP1VNfEf1YeGsun6x1Q",
         },
     },
-    .minimum_zig_version = "0.16.0-dev.2973+06b85a4fd",
+    .minimum_zig_version = "0.16.0",
     .paths = .{ "src", "build.zig", "build.zig.zon", "LICENSE", "README.md" },
     .fingerprint = 0x3a6a7778bfce35e4,
 }
