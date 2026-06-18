@@ -61,23 +61,23 @@ fn handle_midi_event(data: ?*anyopaque, event: *fs.fluid_midi_event_t) callconv(
 }
 
 const Command = struct {
-    prefix: u8,
+    prefix: []const u8,
     handler: *const fn (args: []const u8, writer: *Io.Writer, synth_state: *Synth) anyerror!void,
     description: []const u8,
 };
 const commands = [_]Command{
-    .{ .prefix = 't', .handler = transpose_cmd, .description = "transpose" },
-    .{ .prefix = 'v', .handler = toggle_touch_cmd, .description = "toggle touch sensing" },
-    .{ .prefix = 'g', .handler = gain_cmd, .description = "get or set gain" },
-    .{ .prefix = 'b', .handler = select_bank_cmd, .description = "select bank" },
-    .{ .prefix = 'p', .handler = program_change_cmd, .description = "program change" },
-    .{ .prefix = 'h', .handler = print_help, .description = "print help" },
-    .{ .prefix = 'q', .handler = quit_cmd, .description = "quit" },
+    .{ .prefix = "t", .handler = transpose_cmd, .description = "transpose" },
+    .{ .prefix = "v", .handler = toggle_touch_cmd, .description = "toggle touch sensing" },
+    .{ .prefix = "g", .handler = gain_cmd, .description = "get or set gain" },
+    .{ .prefix = "b", .handler = select_bank_cmd, .description = "select bank" },
+    .{ .prefix = "p", .handler = program_change_cmd, .description = "program change" },
+    .{ .prefix = "h", .handler = print_help, .description = "print help" },
+    .{ .prefix = "q", .handler = quit_cmd, .description = "quit" },
 };
 
 fn print_help(_: []const u8, writer: *Io.Writer, _: *Synth) !void {
     for (commands) |cmd| {
-        try writer.print("{c}: {s}\n", .{ cmd.prefix, cmd.description });
+        try writer.print("{s}: {s}\n", .{ cmd.prefix, cmd.description });
     }
     try writer.flush();
 }
@@ -135,10 +135,13 @@ fn quit_cmd(_: []const u8, _: *Io.Writer, _: *Synth) !void {
 
 fn handle_cmd(cmd: []const u8, writer: *Io.Writer, synth_state: *Synth) !void {
     if (cmd.len == 0) return;
-    const prefix = cmd[0];
+    const prefix_end = f: for (cmd, 0..) |c, i| {
+        if (!std.ascii.isAlphabetic(c)) break :f i;
+    } else cmd.len;
+    const prefix = cmd[0..prefix_end];
     for (commands) |c| {
-        if (c.prefix == prefix) {
-            const args = std.mem.trim(u8, cmd[1..], &std.ascii.whitespace);
+        if (std.mem.eql(u8, c.prefix, prefix)) {
+            const args = std.mem.trim(u8, cmd[prefix_end..], &std.ascii.whitespace);
             try c.handler(args, writer, synth_state);
             break;
         }
@@ -297,17 +300,17 @@ pub fn main(init: std.process.Init) !void {
     set_fluid_log();
     var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
     if (!args.skip()) return error.NoArgs; //to skip the zig call
-    const sf2_path = args.next() orelse return error.NoSf2;
+    const sf2_path = args.next() orelse std.process.fatal("Missing SF2 file path", .{});
 
     log.info("Loading sf2: {s}", .{sf2_path});
 
-    const settings = try fs.new_fluid_settings();
+    const settings = fs.new_fluid_settings() catch @panic("OOM");
     defer fs.delete_fluid_settings(settings);
     try fs.fluid_settings_setint(settings, "midi.autoconnect", 1);
     try fs.fluid_settings_setstr(settings, "audio.driver", audio_driver);
     try fs.fluid_settings_setstr(settings, "midi.driver", midi_driver);
 
-    const synth = fs.new_fluid_synth(settings) catch return error.NoSynth;
+    const synth = fs.new_fluid_synth(settings) catch @panic("OOM");
     var synth_state: Synth = .init(synth, io);
     defer fs.delete_fluid_synth(synth);
 
@@ -339,6 +342,7 @@ pub fn main(init: std.process.Init) !void {
     var group_buffer: [1]TasksUnion = undefined;
     var group = Io.Select(TasksUnion).init(io, &group_buffer);
     defer group.cancelDiscard();
+
     try group.concurrent(.stdin, stdin_thread_fn, .{ io, &synth_state });
     try group.concurrent(.tcp, tcp_server_thread_fn, .{ io, &synth_state });
     try group.concurrent(.active_sensing, active_sensing_thread_fn, .{ io, &synth_state });
